@@ -1,20 +1,112 @@
-# Shadow Owners PoC
+# Shadow Owners & Modules PoC
 
-One little-known attack vector for multisig is [shadow owners](https://docs.lido.fi/guides/multisig-shadow-owners/). This repository will implement a Proof of Concept (PoC) that deploys a Safe-style multisig with a hidden "shadow" owner. The goal is to demonstrate how an address can be authorized to execute transactions while remaining invisible to the standard `getOwners()` list and Safe UI, and to make that behavior observable in a controlled, testable setup. Note that shadow modules are also a risk.
+A Foundry-based proof of concept demonstrating how "shadow" owners and modules can be hidden inside a Safe multisig. Shadow entries are authorized to act (sign transactions or execute via module) but are **invisible** in the standard Safe UI and getter functions (`getOwners()`, `getModulesPaginated()`).
 
-**Background**
-- Safe multisigs store owners in a linked-list mapping of `address -> address` with a sentinel address marking the end of the list. Entries that are not reachable from the sentinel can exist in storage but will not appear in `getOwners()`.
-- A shadow owner can be added by writing to storage during `setup()`, `executeTransaction()`, or `executeTransactionFromModule()` via `DELEGATECALL`, which allows arbitrary storage mutation.
+This is an educational security PoC — not a production tool.
 
-**What This Repo Will Do**
-- Deploy a Safe-like multisig in a local test environment.
-- Add a shadow owner by mutating the owners mapping via a delegatecall during setup or execution.
-- Prove the shadow owner is authorized (e.g., `isOwner` or signature acceptance) while remaining absent from `getOwners()`.
-- Show how this creates "dirty" storage that does not match the expected Safe storage layout, and how to read the affected storage slots with Foundry tooling (for example, `cast storage`).
+## Background
 
-**Non-Goals**
+Safe multisigs store owners and modules in linked-list mappings (`mapping(address => address)`) with a sentinel address (`0x1`) marking the list boundaries:
+
+```
+owners[SENTINEL] -> owner1 -> owner2 -> owner3 -> SENTINEL
+```
+
+`getOwners()` traverses this linked list, while `isOwner(addr)` simply checks `owners[addr] != address(0)`. An entry can exist in the mapping without being reachable from the sentinel — making it pass `isOwner()` while being absent from `getOwners()`.
+
+Shadow entries are injected by executing a `DELEGATECALL` to a contract that writes directly to the mapping's storage slot via `sstore`. This can happen during:
+- **`setup()`** — the `to`/`data` parameters trigger a delegatecall in `setupModules()`
+- **`execTransaction()`** — using `Enum.Operation.DelegateCall` as the operation type
+
+The same technique applies to the `modules` mapping (slot 1) as to the `owners` mapping (slot 2).
+
+Reference: [Lido — Multisig Shadow Owners Guide](https://docs.lido.fi/guides/multisig-shadow-owners/)
+
+## What This Repo Demonstrates
+
+### Shadow Owners (test/ShadowOwner.t.sol)
+
+| Test | What it proves |
+|------|---------------|
+| `test_shadowOwnerIsHiddenButAuthorized` | `isOwner(shadow)` returns true, but `getOwners()` does not include the shadow address. Threshold is based only on visible owners. |
+| `test_shadowOwnerCanSignTransaction` | A real `execTransaction` sending ETH succeeds using signatures from 1 legitimate owner + the shadow owner. |
+| `test_storageInspection` | Raw storage reads via `vm.load()` show the orphaned mapping entry and confirm the shadow is unreachable in the linked list. |
+| `test_injectShadowViaExecTransaction` | Shadow owner is injected post-setup via a DELEGATECALL `execTransaction`, then used to co-sign a transfer. |
+
+### Shadow Modules (test/ShadowModule.t.sol)
+
+| Test | What it proves |
+|------|---------------|
+| `test_shadowModuleIsHiddenButEnabled` | `isModuleEnabled(shadow)` returns true, but `getModulesPaginated()` does not list it. |
+| `test_shadowModuleCanExecuteWithoutSignatures` | The shadow module calls `execTransactionFromModule()` to drain ETH — no owner signatures needed. |
+| `test_moduleStorageInspection` | Raw storage reads show the orphaned modules mapping entry. |
+| `test_injectShadowModuleViaExecTransaction` | Shadow module is injected post-setup via DELEGATECALL, then used to drain funds. |
+
+## Storage Layout
+
+From `SafeStorage.sol`, the relevant slots:
+
+| Slot | Variable | Type |
+|------|----------|------|
+| 0 | `singleton` | `address` |
+| 1 | `modules` | `mapping(address => address)` |
+| 2 | `owners` | `mapping(address => address)` |
+| 3 | `ownerCount` | `uint256` |
+| 4 | `threshold` | `uint256` |
+
+The storage slot for a mapping entry is `keccak256(abi.encode(key, slot))`. For example, `owners[0xABCD...]` is at `keccak256(abi.encode(0xABCD..., 2))`.
+
+## How to Run
+
+### Prerequisites
+- [Foundry](https://book.getfoundry.sh/getting-started/installation) installed
+
+### Build & Test
+
+```bash
+# Clone and enter the repo
+git clone <repo-url> && cd shadow-owners
+
+# Install dependencies (if not already present)
+forge install
+
+# Build
+forge build
+
+# Run all tests with verbose output
+forge test -vvvv
+```
+
+### Reading the Output
+
+With `-vvvv`, each test prints:
+- **Console logs** showing the before/after state (isOwner, getOwners, balances)
+- **Execution traces** showing the delegatecall into the injector and the `sstore` that writes the shadow entry
+- **ecrecover traces** showing which addresses signed the transaction
+
+### Manual Storage Inspection
+
+To inspect storage slots manually after deploying to a local Anvil node:
+
+```bash
+# Check if an address is a listed owner
+cast call <SAFE_ADDR> "getOwners()(address[])"
+
+# Check if an address passes isOwner
+cast call <SAFE_ADDR> "isOwner(address)(bool)" <SHADOW_ADDR>
+
+# Read the raw storage slot for owners[SHADOW_ADDR]
+# Slot = keccak256(abi.encode(SHADOW_ADDR, 2))
+cast storage <SAFE_ADDR> <COMPUTED_SLOT>
+```
+
+## Key Takeaway
+
+**Shadow owners** can co-sign transactions but require threshold-many signatures (including themselves). **Shadow modules** are strictly more dangerous — they can execute arbitrary transactions with zero owner signatures. Both are invisible through standard Safe interfaces.
+
+Detection requires comparing on-chain storage against the linked list, or monitoring for `DELEGATECALL` operations in transaction proposals.
+
+## Non-Goals
+
 - This is not a production-safe multisig implementation.
 - This is not a detection tool for mainnet multisigs; it is a minimal PoC to explain the mechanism.
-
-**Tooling**
-This is a Foundry project. Use standard Foundry workflows (`forge build`, `forge test`, `forge script`) as the PoC is implemented.
