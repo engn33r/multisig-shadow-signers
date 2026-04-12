@@ -76,7 +76,7 @@ contract DetectShadows is Script {
         // =====================================================================
         //  PHASE 2: Run Detection (read-only, no broadcast needed)
         // =====================================================================
-        _runDetection(ISafe(address(safe)), address(ownerInjector), shadowOwner);
+        _runDetection(ISafe(payable(address(safe))), address(ownerInjector), shadowOwner);
     }
 
     function _runDetection(
@@ -171,7 +171,7 @@ contract DetectShadows is Script {
 contract AuditExistingSafe is Script {
     function run() external view {
         address safeAddr = vm.envAddress("SAFE_ADDRESS");
-        ISafe safe = ISafe(safeAddr);
+        ISafe safe = ISafe(payable(safeAddr));
 
         console.log("========================================");
         console.log("  Auditing Safe: %s", safeAddr);

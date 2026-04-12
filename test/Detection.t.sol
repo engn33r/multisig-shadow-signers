@@ -402,3 +402,112 @@ contract DetectionPlan4Test is Test {
         console.log("Probed %d legitimate/random addresses - 0 shadows (correct).", candidates.length);
     }
 }
+
+// =========================================================================
+//  Plan 5: Dormant Shadow Detection
+// =========================================================================
+
+/// @title DetectionPlan5Test
+/// @notice Detects shadow signers that have NEVER signed a transaction (dormant).
+/// @dev This addresses the key limitation of Plan 1 (signature recovery) which
+///      only finds shadows that have already signed.
+contract DetectionPlan5Test is Test {
+    Safe public singleton;
+    SafeProxyFactory public factory;
+    ShadowOwnerInjector public injector;
+    Safe public safe;
+
+    uint256 constant OWNER1_KEY = 0xA001;
+    uint256 constant OWNER2_KEY = 0xA002;
+    uint256 constant OWNER3_KEY = 0xA003;
+    uint256 constant SHADOW_KEY = 0xBEEF;
+
+    address owner1;
+    address owner2;
+    address owner3;
+    address shadowOwner;
+
+    function setUp() public {
+        owner1 = vm.addr(OWNER1_KEY);
+        owner2 = vm.addr(OWNER2_KEY);
+        owner3 = vm.addr(OWNER3_KEY);
+        shadowOwner = vm.addr(SHADOW_KEY);
+
+        singleton = new Safe();
+        factory = new SafeProxyFactory();
+        injector = new ShadowOwnerInjector();
+
+        address[] memory owners = new address[](3);
+        owners[0] = owner1;
+        owners[1] = owner2;
+        owners[2] = owner3;
+
+        bytes memory initializer = abi.encodeWithSelector(
+            Safe.setup.selector,
+            owners, uint256(2),
+            address(injector),
+            abi.encodeWithSelector(ShadowOwnerInjector.injectShadowOwner.selector, shadowOwner),
+            address(0), address(0), uint256(0), payable(address(0))
+        );
+
+        SafeProxy proxy = factory.createProxyWithNonce(address(singleton), initializer, 0);
+        safe = Safe(payable(address(proxy)));
+        vm.deal(address(safe), 1 ether);
+    }
+
+    /// @notice Detect a dormant shadow by extracting its address from injector calldata.
+    /// @dev Even if the shadow never signs, its address appeared in the delegatecall
+    ///      data that injected it. We extract it and probe.
+    function test_detectDormantShadowFromInjectorCalldata() public view {
+        // The injector call that added the shadow - this is where shadowOwner appears
+        bytes memory injectorCalldata = abi.encodeWithSelector(
+            ShadowOwnerInjector.injectShadowOwner.selector,
+            shadowOwner
+        );
+
+        // Extract all addresses from the injector calldata
+        (address[] memory candidates, uint256 count) = 
+            SafeDetector.extractAddressesFromCalldata(injectorCalldata);
+
+        console.log("Extracted %d addresses from injector calldata", count);
+
+        // Probe the extracted candidates
+        (SafeDetector.ShadowResult[] memory shadows, uint256 shadowCount) =
+            SafeDetector.findShadowOwners(ISafe(payable(address(safe))), candidates);
+
+        assertTrue(shadowCount > 0, "should find shadow from calldata extraction");
+        assertEq(shadows[0].candidate, shadowOwner, "detected address should be the shadow");
+
+        console.log("Detected %d dormant shadow(s)", shadowCount);
+        console.log("Shadow owner: %s", shadows[0].candidate);
+    }
+
+    /// @notice Full demonstration: Detect dormant shadow without any signatures.
+    /// @dev This is the complete flow for detecting a shadow that was injected
+    ///      at setup but has never (and may never) sign a transaction.
+    function test_detectDormantShadowWithoutSignatures() public view {
+        // Step 1: Extract candidates from historical calldata (setup in this case)
+        // The shadow was injected via delegatecall during setup - extract from that calldata
+        bytes[] memory history = new bytes[](1);
+        history[0] = abi.encodeWithSelector(
+            ShadowOwnerInjector.injectShadowOwner.selector,
+            shadowOwner
+        );
+
+        console.log("Step 1: Scanning historical calldata for candidates...");
+        (SafeDetector.ShadowResult[] memory shadows, uint256 shadowCount) =
+            SafeDetector.detectDormantShadowsFromHistory(
+                ISafe(payable(address(safe))), 
+                history
+            );
+
+        // Step 2: Verify detection
+        assertEq(shadowCount, 1, "should detect exactly 1 dormant shadow");
+        assertEq(shadows[0].candidate, shadowOwner, "should be the shadow owner");
+        assertTrue(shadows[0].isShadowOwner, "should be flagged as shadow owner");
+
+        console.log("Step 2: DORMANT SHADOW DETECTED!");
+        console.log("  Address: %s", shadows[0].candidate);
+        console.log("  Never signed a transaction, found via calldata extraction");
+    }
+}

@@ -317,6 +317,58 @@ library SafeDetector {
     }
 
     // =========================================================================
+    //  Dormant Shadow Detection
+    // =========================================================================
+
+    /// @notice Scan historical transaction calldata to extract candidate addresses
+    ///         that might be dormant shadows, then probe them.
+    /// @dev This is designed for use in Foundry scripts against a forked network
+    ///      where you can fetch historical transactions via RPC.
+    /// @param safe The Safe to check.
+    /// @param historicalCalldata Array of calldata from past Safe transactions
+    ///        (setup initializer, delegatecall execTransactions, etc).
+    /// @return shadows Array of detected shadow owners from the candidates.
+    /// @return shadowCount Number of dormant shadows found.
+    function detectDormantShadowsFromHistory(
+        ISafe safe,
+        bytes[] memory historicalCalldata
+    ) internal view returns (ShadowResult[] memory shadows, uint256 shadowCount) {
+        // Collect all unique addresses from historical calldata
+        address[] memory allCandidates = new address[](historicalCalldata.length * 10); // rough estimate
+        uint256 candidateCount = 0;
+
+        for (uint256 i = 0; i < historicalCalldata.length; i++) {
+            (address[] memory extracted, uint256 extractedCount) = 
+                extractAddressesFromCalldata(historicalCalldata[i]);
+            
+            for (uint256 j = 0; j < extractedCount; j++) {
+                address candidate = extracted[j];
+                // Skip duplicates
+                bool alreadyAdded = false;
+                for (uint256 k = 0; k < candidateCount; k++) {
+                    if (allCandidates[k] == candidate) {
+                        alreadyAdded = true;
+                        break;
+                    }
+                }
+                if (!alreadyAdded) {
+                    allCandidates[candidateCount] = candidate;
+                    candidateCount++;
+                }
+            }
+        }
+
+        // Trim array to actual size
+        address[] memory candidates = new address[](candidateCount);
+        for (uint256 i = 0; i < candidateCount; i++) {
+            candidates[i] = allCandidates[i];
+        }
+
+        // Probe candidates for shadows
+        return findShadowOwners(safe, candidates);
+    }
+
+    // =========================================================================
     //  Internal Helpers
     // =========================================================================
 
