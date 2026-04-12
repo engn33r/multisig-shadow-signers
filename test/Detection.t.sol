@@ -47,10 +47,14 @@ abstract contract ShadowOwnerFixture is Test {
 
         bytes memory initializer = abi.encodeWithSelector(
             Safe.setup.selector,
-            owners, uint256(2),
+            owners,
+            uint256(2),
             address(injector),
             abi.encodeWithSelector(ShadowOwnerInjector.injectShadowOwner.selector, shadowOwner),
-            address(0), address(0), uint256(0), payable(address(0))
+            address(0),
+            address(0),
+            uint256(0),
+            payable(address(0))
         );
 
         SafeProxy proxy = factory.createProxyWithNonce(address(singleton), initializer, 0);
@@ -83,15 +87,13 @@ contract DetectionPlan1Test is ShadowOwnerFixture {
         uint256 sendAmount = 0.1 ether;
 
         bytes32 txHash = safe.getTransactionHash(
-            recipient, sendAmount, "", Enum.Operation.Call,
-            0, 0, 0, address(0), payable(address(0)), safe.nonce()
+            recipient, sendAmount, "", Enum.Operation.Call, 0, 0, 0, address(0), payable(address(0)), safe.nonce()
         );
 
         bytes memory signatures = _sortAndSign(OWNER1_KEY, SHADOW_KEY, txHash);
 
         safe.execTransaction(
-            recipient, sendAmount, "", Enum.Operation.Call,
-            0, 0, 0, address(0), payable(address(0)), signatures
+            recipient, sendAmount, "", Enum.Operation.Call, 0, 0, 0, address(0), payable(address(0)), signatures
         );
 
         // DETECTION: recover signers and find unlisted ones
@@ -121,21 +123,18 @@ contract DetectionPlan1Test is ShadowOwnerFixture {
         address recipient = makeAddr("recipient2");
 
         bytes32 txHash = safe.getTransactionHash(
-            recipient, 0.05 ether, "", Enum.Operation.Call,
-            0, 0, 0, address(0), payable(address(0)), safe.nonce()
+            recipient, 0.05 ether, "", Enum.Operation.Call, 0, 0, 0, address(0), payable(address(0)), safe.nonce()
         );
 
         // Sign with two legitimate owners only
         bytes memory signatures = _sortAndSign(OWNER1_KEY, OWNER2_KEY, txHash);
 
         safe.execTransaction(
-            recipient, 0.05 ether, "", Enum.Operation.Call,
-            0, 0, 0, address(0), payable(address(0)), signatures
+            recipient, 0.05 ether, "", Enum.Operation.Call, 0, 0, 0, address(0), payable(address(0)), signatures
         );
 
-        (, uint256 count) = SafeDetector.findUnlistedSigners(
-            ISafe(payable(address(safe))), txHash, signatures, safe.getThreshold()
-        );
+        (, uint256 count) =
+            SafeDetector.findUnlistedSigners(ISafe(payable(address(safe))), txHash, signatures, safe.getThreshold());
 
         assertEq(count, 0, "no unlisted signers when all signers are legitimate");
         console.log("=== Plan 1: No False Positives ===");
@@ -184,14 +183,19 @@ contract DetectionPlan2Test is ShadowOwnerFixture {
 
         bytes memory cleanInit = abi.encodeWithSelector(
             Safe.setup.selector,
-            owners, uint256(2),
-            address(0), "", address(0), address(0), uint256(0), payable(address(0))
+            owners,
+            uint256(2),
+            address(0),
+            "",
+            address(0),
+            address(0),
+            uint256(0),
+            payable(address(0))
         );
         SafeProxy cleanProxy = factory.createProxyWithNonce(address(singleton), cleanInit, 99);
         Safe cleanSafe = Safe(payable(address(cleanProxy)));
 
-        (bool suspicious, , ) =
-            SafeDetector.analyzeSetupDelegatecall(ISafe(payable(address(cleanSafe))), address(0));
+        (bool suspicious,,) = SafeDetector.analyzeSetupDelegatecall(ISafe(payable(address(cleanSafe))), address(0));
 
         assertFalse(suspicious, "clean setup should not be flagged");
         console.log("=== Plan 2: Clean Setup ===");
@@ -212,9 +216,7 @@ contract DetectionPlan2Test is ShadowOwnerFixture {
         address[] memory removedEvents = new address[](0);
 
         (, uint256 count) =
-            SafeDetector.findOwnersWithoutEvents(
-                ISafe(payable(address(safe))), addedEvents, removedEvents, setupOwners
-            );
+            SafeDetector.findOwnersWithoutEvents(ISafe(payable(address(safe))), addedEvents, removedEvents, setupOwners);
 
         // All current owners were in the setup event, so count should be 0.
         // The shadow owner is NOT in getOwners() so it won't appear here either.
@@ -272,26 +274,30 @@ contract DetectionPlan4Test is Test {
         // Safe with shadow owner
         bytes memory init1 = abi.encodeWithSelector(
             Safe.setup.selector,
-            owners, uint256(2),
+            owners,
+            uint256(2),
             address(ownerInjector),
             abi.encodeWithSelector(ShadowOwnerInjector.injectShadowOwner.selector, shadowOwner),
-            address(0), address(0), uint256(0), payable(address(0))
+            address(0),
+            address(0),
+            uint256(0),
+            payable(address(0))
         );
-        safeShadowOwner = Safe(payable(address(
-            factory.createProxyWithNonce(address(singleton), init1, 0)
-        )));
+        safeShadowOwner = Safe(payable(address(factory.createProxyWithNonce(address(singleton), init1, 0))));
 
         // Safe with shadow module
         bytes memory init2 = abi.encodeWithSelector(
             Safe.setup.selector,
-            owners, uint256(2),
+            owners,
+            uint256(2),
             address(moduleInjector),
             abi.encodeWithSelector(ShadowModuleInjector.injectShadowModule.selector, shadowModule),
-            address(0), address(0), uint256(0), payable(address(0))
+            address(0),
+            address(0),
+            uint256(0),
+            payable(address(0))
         );
-        safeShadowModule = Safe(payable(address(
-            factory.createProxyWithNonce(address(singleton), init2, 1)
-        )));
+        safeShadowModule = Safe(payable(address(factory.createProxyWithNonce(address(singleton), init2, 1))));
     }
 
     /// @notice Detect shadow owner by probing candidate list.
@@ -358,20 +364,15 @@ contract DetectionPlan4Test is Test {
 
     /// @notice Extract candidate addresses from injector calldata automatically.
     function test_extractCandidatesFromCalldata() public view {
-        bytes memory calldata1 = abi.encodeWithSelector(
-            ShadowOwnerInjector.injectShadowOwner.selector,
-            shadowOwner
-        );
+        bytes memory calldata1 = abi.encodeWithSelector(ShadowOwnerInjector.injectShadowOwner.selector, shadowOwner);
 
-        (address[] memory extracted, uint256 extractedCount) =
-            SafeDetector.extractAddressesFromCalldata(calldata1);
+        (address[] memory extracted, uint256 extractedCount) = SafeDetector.extractAddressesFromCalldata(calldata1);
 
         assertEq(extractedCount, 1, "should extract 1 address");
         assertEq(extracted[0], shadowOwner, "extracted address should match shadow");
 
         // Now use extracted addresses to probe
-        (, uint256 shadowCount) =
-            SafeDetector.findShadowOwners(ISafe(payable(address(safeShadowOwner))), extracted);
+        (, uint256 shadowCount) = SafeDetector.findShadowOwners(ISafe(payable(address(safeShadowOwner))), extracted);
 
         assertEq(shadowCount, 1, "extracted candidate should be detected as shadow");
 
@@ -390,10 +391,8 @@ contract DetectionPlan4Test is Test {
         candidates[3] = address(0x1111);
         candidates[4] = address(0x2222);
 
-        (, uint256 ownerCount) =
-            SafeDetector.findShadowOwners(ISafe(payable(address(safeShadowOwner))), candidates);
-        (, uint256 moduleCount) =
-            SafeDetector.findShadowModules(ISafe(payable(address(safeShadowOwner))), candidates);
+        (, uint256 ownerCount) = SafeDetector.findShadowOwners(ISafe(payable(address(safeShadowOwner))), candidates);
+        (, uint256 moduleCount) = SafeDetector.findShadowModules(ISafe(payable(address(safeShadowOwner))), candidates);
 
         assertEq(ownerCount, 0, "no shadow owners among legitimate addresses");
         assertEq(moduleCount, 0, "no shadow modules among legitimate addresses");
@@ -444,10 +443,14 @@ contract DetectionPlan5Test is Test {
 
         bytes memory initializer = abi.encodeWithSelector(
             Safe.setup.selector,
-            owners, uint256(2),
+            owners,
+            uint256(2),
             address(injector),
             abi.encodeWithSelector(ShadowOwnerInjector.injectShadowOwner.selector, shadowOwner),
-            address(0), address(0), uint256(0), payable(address(0))
+            address(0),
+            address(0),
+            uint256(0),
+            payable(address(0))
         );
 
         SafeProxy proxy = factory.createProxyWithNonce(address(singleton), initializer, 0);
@@ -460,14 +463,11 @@ contract DetectionPlan5Test is Test {
     ///      data that injected it. We extract it and probe.
     function test_detectDormantShadowFromInjectorCalldata() public view {
         // The injector call that added the shadow - this is where shadowOwner appears
-        bytes memory injectorCalldata = abi.encodeWithSelector(
-            ShadowOwnerInjector.injectShadowOwner.selector,
-            shadowOwner
-        );
+        bytes memory injectorCalldata =
+            abi.encodeWithSelector(ShadowOwnerInjector.injectShadowOwner.selector, shadowOwner);
 
         // Extract all addresses from the injector calldata
-        (address[] memory candidates, uint256 count) = 
-            SafeDetector.extractAddressesFromCalldata(injectorCalldata);
+        (address[] memory candidates, uint256 count) = SafeDetector.extractAddressesFromCalldata(injectorCalldata);
 
         console.log("Extracted %d addresses from injector calldata", count);
 
@@ -489,17 +489,11 @@ contract DetectionPlan5Test is Test {
         // Step 1: Extract candidates from historical calldata (setup in this case)
         // The shadow was injected via delegatecall during setup - extract from that calldata
         bytes[] memory history = new bytes[](1);
-        history[0] = abi.encodeWithSelector(
-            ShadowOwnerInjector.injectShadowOwner.selector,
-            shadowOwner
-        );
+        history[0] = abi.encodeWithSelector(ShadowOwnerInjector.injectShadowOwner.selector, shadowOwner);
 
         console.log("Step 1: Scanning historical calldata for candidates...");
         (SafeDetector.ShadowResult[] memory shadows, uint256 shadowCount) =
-            SafeDetector.detectDormantShadowsFromHistory(
-                ISafe(payable(address(safe))), 
-                history
-            );
+            SafeDetector.detectDormantShadowsFromHistory(ISafe(payable(address(safe))), history);
 
         // Step 2: Verify detection
         assertEq(shadowCount, 1, "should detect exactly 1 dormant shadow");
