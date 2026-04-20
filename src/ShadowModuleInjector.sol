@@ -45,4 +45,13 @@ contract ShadowModuleInjector {
             sstore(slot, 0x0000000000000000000000000000000000000000000000000000000000000001)
         }
     }
+
+    /// @notice Self-destruct the injector to remove on-chain evidence.
+    /// @dev DO NOT call this during the delegatecall (that would destroy the Safe!).
+    ///      Call in a separate transaction from any address.
+    ///      Note: Since EIP-6780 (Cancun), SELFDESTRUCT only deletes code if called
+    ///      in the same transaction as contract creation. Otherwise only ETH is transferred.
+    function destroy() external {
+        selfdestruct(payable(msg.sender));
+    }
 }

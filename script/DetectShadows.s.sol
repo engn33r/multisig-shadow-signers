@@ -102,10 +102,10 @@ contract DetectShadows is Script {
         console.log("Suspicious:  %s", suspicious ? "YES - one-shot injector pattern" : "no");
 
         // -----------------------------------------------------------------
-        //  Plan 4: Probe candidate addresses
+        //  Plan 3: Probe candidate addresses
         // -----------------------------------------------------------------
         console.log("");
-        console.log("--- Plan 4: Candidate Probing ---");
+        console.log("--- Plan 3: Candidate Probing ---");
 
         // Build candidate list from the delegatecall calldata
         bytes memory injectorCalldata =

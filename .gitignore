@@ -13,5 +13,10 @@ docs/
 # Dotenv file
 .env
 
+# Python
+__pycache__/
+*.pyc
+venv/
+
 # Dependencies
 lib/safe-smart-account/

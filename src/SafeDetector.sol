@@ -170,7 +170,7 @@ library SafeDetector {
     }
 
     // =========================================================================
-    //  Plan 4: Candidate Probing
+    //  Plan 3: Candidate Probing
     // =========================================================================
 
     /// @notice Probe a list of candidate addresses against a Safe to find shadow owners.
@@ -304,7 +304,7 @@ library SafeDetector {
     }
 
     // =========================================================================
-    //  Dormant Shadow Detection
+    //  Plan 4: Dormant Shadow Detection
     // =========================================================================
 
     /// @notice Scan historical transaction calldata to extract candidate addresses

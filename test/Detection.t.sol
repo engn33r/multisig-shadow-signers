@@ -221,24 +221,24 @@ contract DetectionPlan2Test is ShadowOwnerFixture {
         // All current owners were in the setup event, so count should be 0.
         // The shadow owner is NOT in getOwners() so it won't appear here either.
         // This highlights that Plan 2 alone can't find shadows that aren't in the list -
-        // it needs to be combined with Plan 4 (probing candidates from calldata).
+        // it needs to be combined with Plan 3 (probing candidates from calldata).
         assertEq(count, 0, "all listed owners have corresponding events");
 
         console.log("=== Plan 2: Event Audit ===");
         console.log("All listed owners match setup event - no discrepancy in the list.");
         console.log("NOTE: Shadow is in storage but NOT in getOwners(), so event audit");
-        console.log("alone cannot find it. Must combine with Plan 4 (candidate probing).");
+        console.log("alone cannot find it. Must combine with Plan 3 (candidate probing).");
     }
 }
 
 // =========================================================================
-//  Plan 4: Candidate Probing Detection
+//  Plan 3: Candidate Probing Detection
 // =========================================================================
 
-/// @title DetectionPlan4Test
+/// @title DetectionPlan3Test
 /// @notice Uses SafeDetector.findShadowOwners, findShadowModules, fullScan, and
 ///         extractAddressesFromCalldata to detect shadows from candidate lists.
-contract DetectionPlan4Test is Test {
+contract DetectionPlan3Test is Test {
     Safe public singleton;
     SafeProxyFactory public factory;
     ShadowOwnerInjector public ownerInjector;
@@ -315,7 +315,7 @@ contract DetectionPlan4Test is Test {
         assertEq(shadows[0].candidate, shadowOwner);
         assertTrue(shadows[0].isShadowOwner);
 
-        console.log("=== Plan 4: Shadow Owner Probing ===");
+        console.log("=== Plan 3: Shadow Owner Probing ===");
         console.log("Probed %d candidates, found %d shadow(s)", candidates.length, count);
         console.log("Shadow owner: %s", shadows[0].candidate);
     }
@@ -334,7 +334,7 @@ contract DetectionPlan4Test is Test {
         assertEq(shadows[0].candidate, shadowModule);
         assertTrue(shadows[0].isShadowModule);
 
-        console.log("=== Plan 4: Shadow Module Probing ===");
+        console.log("=== Plan 3: Shadow Module Probing ===");
         console.log("Probed %d candidates, found %d shadow(s)", candidates.length, count);
         console.log("Shadow module: %s", shadows[0].candidate);
     }
@@ -358,7 +358,7 @@ contract DetectionPlan4Test is Test {
         assertTrue(shadows[0].isShadowOwner);
         assertFalse(shadows[0].isShadowModule);
 
-        console.log("=== Plan 4: Full Scan (owner Safe) ===");
+        console.log("=== Plan 3: Full Scan (owner Safe) ===");
         console.log("Found %d shadow(s) out of %d candidates", count, candidates.length);
     }
 
@@ -376,7 +376,7 @@ contract DetectionPlan4Test is Test {
 
         assertEq(shadowCount, 1, "extracted candidate should be detected as shadow");
 
-        console.log("=== Plan 4: Calldata Extraction + Probing ===");
+        console.log("=== Plan 3: Calldata Extraction + Probing ===");
         console.log("Extracted %d address(es) from calldata", extractedCount);
         console.log("  candidate: %s", extracted[0]);
         console.log("Probing result: SHADOW OWNER DETECTED");
@@ -397,20 +397,20 @@ contract DetectionPlan4Test is Test {
         assertEq(ownerCount, 0, "no shadow owners among legitimate addresses");
         assertEq(moduleCount, 0, "no shadow modules among legitimate addresses");
 
-        console.log("=== Plan 4: No False Positives ===");
+        console.log("=== Plan 3: No False Positives ===");
         console.log("Probed %d legitimate/random addresses - 0 shadows (correct).", candidates.length);
     }
 }
 
 // =========================================================================
-//  Plan 5: Dormant Shadow Detection
+//  Plan 4: Dormant Shadow Detection
 // =========================================================================
 
-/// @title DetectionPlan5Test
+/// @title DetectionPlan4Test
 /// @notice Detects shadow signers that have NEVER signed a transaction (dormant).
 /// @dev This addresses the key limitation of Plan 1 (signature recovery) which
 ///      only finds shadows that have already signed.
-contract DetectionPlan5Test is Test {
+contract DetectionPlan4Test is Test {
     Safe public singleton;
     SafeProxyFactory public factory;
     ShadowOwnerInjector public injector;
